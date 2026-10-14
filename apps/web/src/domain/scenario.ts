@@ -7,7 +7,8 @@ export const MIN_LANES = 1;
 export const MAX_LANES = 4;
 export const MIN_MAXSPEED_KMH = 10;
 export const MAX_MAXSPEED_KMH = 90;
-export const MAX_EDITS = 50;
+export const MAX_EDITS = 400;
+export const MAX_EDITS_ERROR = "A scenario can change at most 400 roads.";
 export const SNAP_METERS = 40;
 export const LINK_ID_BASE = 8_000_000_000_000;
 
@@ -98,7 +99,7 @@ export function commitEdit(
   if (error) return { edits: [...edits], error };
   const replacing = edits.some((item) => item.wayId === edit.wayId);
   if (!replacing && edits.length >= MAX_EDITS) {
-    return { edits: [...edits], error: "A scenario can change at most 50 roads." };
+    return { edits: [...edits], error: MAX_EDITS_ERROR };
   }
   const next = edit.op === "access" ? { ...edit, modes: normalizeModes(edit.modes) } : edit;
   return { edits: [...edits.filter((item) => item.wayId !== edit.wayId), next], error: null };
@@ -118,7 +119,7 @@ export function commitAdd(
   if (haversineMeters(start.point, end.point) < 1) {
     return { edits: [...edits], error: "Choose two different ends." };
   }
-  if (edits.length >= MAX_EDITS) return { edits: [...edits], error: "A scenario can change at most 50 roads." };
+  if (edits.length >= MAX_EDITS) return { edits: [...edits], error: MAX_EDITS_ERROR };
   const name = input.name?.trim();
   const edit: RoadEdit = {
     wayId: nextLinkId(edits),

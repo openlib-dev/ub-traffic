@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { ULAANBAATAR } from "@/domain/city";
 import {
+  laneChain,
   mergeRoads,
+  oppositeOneway,
   pruneRoads,
   type BBox,
   type LayerToggles,
@@ -56,6 +58,7 @@ type AppState = {
   layers: LayerToggles;
   roads: RoadFeature[];
   selectedRoadId: number | null;
+  selectedRoadIds: number[];
   loadStatus: LoadStatus;
   loadError: string | null;
   retryToken: number;
@@ -97,7 +100,7 @@ type AppState = {
   setBasemap: (basemap: BasemapId) => void;
   setLayer: (key: keyof LayerToggles, enabled: boolean) => void;
   ingestRoads: (incoming: RoadFeature[], view: BBox) => void;
-  selectRoad: (id: number | null) => void;
+  selectRoad: (id: number | null, addOpposite?: boolean) => void;
   setLoadStatus: (status: LoadStatus, error?: string | null) => void;
   retryLoad: () => void;
   setSimulationConnection: (engine: SimulationEngine | null, availability: SimulationAvailability) => void;
@@ -161,6 +164,7 @@ export const useAppStore = create<AppState>((set) => ({
   layers: { arterials: true, local: true, service: false },
   roads: [],
   selectedRoadId: null,
+  selectedRoadIds: [],
   loadStatus: "idle",
   loadError: null,
   retryToken: 0,
@@ -211,13 +215,19 @@ export const useAppStore = create<AppState>((set) => ({
   ingestRoads: (incoming, view) =>
     set((state) => {
       const roads = pruneRoads(mergeRoads(state.roads, incoming), view);
-      const selectedRoadId = roads.some((road) => road.id === state.selectedRoadId)
-        ? state.selectedRoadId
-        : null;
-      return { roads, selectedRoadId, loadStatus: "ready", loadError: null };
+      const selectedRoadIds = state.selectedRoadIds.filter((id) => roads.some((road) => road.id === id));
+      const selectedRoadId = selectedRoadIds.includes(state.selectedRoadId ?? -1) ? state.selectedRoadId : null;
+      return { roads, selectedRoadId, selectedRoadIds, loadStatus: "ready", loadError: null };
     }),
-  selectRoad: (selectedRoadId) =>
-    set(selectedRoadId == null ? { selectedRoadId } : { selectedRoadId, selectedEditIds: [] }),
+  selectRoad: (id, addOpposite = false) =>
+    set((state) => {
+      if (id == null) return { selectedRoadId: null, selectedRoadIds: [] };
+      const chain = laneChain(state.roads, id);
+      const opposite = oppositeOneway(state.roads.find((road) => road.id === id)?.oneway ?? "unknown");
+      const added = addOpposite && opposite ? laneChain(state.roads, id, opposite) : [];
+      const selectedRoadIds = addOpposite ? [...new Set([...state.selectedRoadIds, ...chain, ...added])] : chain;
+      return { selectedRoadId: id, selectedRoadIds, selectedEditIds: [] };
+    }),
   setLoadStatus: (loadStatus, loadError = null) => set({ loadStatus, loadError }),
   retryLoad: () => set((state) => ({ retryToken: state.retryToken + 1, loadError: null })),
   setSimulationConnection: (engine, simulationAvailability) => set({ engine, simulationAvailability }),
@@ -359,7 +369,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ draftPoints, draftCursor, draftInvalid, draftSnapped }),
   cancelDraft: () => set({ draftPoints: [], draftCursor: null, draftInvalid: false, draftSnapped: false, drawError: null }),
   setSelectedEdits: (selectedEditIds) =>
-    set({ selectedEditIds, ...(selectedEditIds.length > 0 ? { selectedRoadId: null } : {}) }),
+    set({ selectedEditIds, ...(selectedEditIds.length > 0 ? { selectedRoadId: null, selectedRoadIds: [] } : {}) }),
   undoEdit: () =>
     set((state) => {
       const active = editableTemplate(state);

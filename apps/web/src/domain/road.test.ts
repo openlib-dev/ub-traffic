@@ -4,6 +4,7 @@ import {
   chooseRoadNames,
   displayName,
   highwayFiltersForLoad,
+  laneChain,
   lengthMeters,
   mergeRoads,
   parseLanes,
@@ -153,6 +154,57 @@ describe("congestion scale", () => {
     expect(new Set(Object.values(CONGESTION_COLOR)).size).toBe(4);
   });
 });
+
+describe("laneChain", () => {
+  const forward = namedPiece(1, [106.9, 47.92], [106.901, 47.92], "Peace Avenue", "yes");
+  const next = namedPiece(2, [106.901, 47.92], [106.902, 47.92], "Peace Avenue", "yes");
+  const opposite = namedPiece(3, [106.9, 47.9201], [106.901, 47.9201], "Peace Avenue", "reverse");
+  const gap = namedPiece(4, [106.91, 47.92], [106.911, 47.92], "Peace Avenue", "yes");
+  const other = namedPiece(5, [106.902, 47.92], [106.903, 47.92], "Seoul Street", "yes");
+  const unnamed = namedPiece(6, [106.9, 47.93], [106.901, 47.93], undefined, "yes");
+
+  it("joins connected pieces of the same named direction", () => {
+    expect(laneChain([forward, next, opposite, gap, other], 1).sort()).toEqual([1, 2]);
+  });
+
+  it("keeps the opposite direction for a separate chain", () => {
+    expect(laneChain([forward, next, opposite], 1, "reverse")).toEqual([3]);
+  });
+
+  it("stops at a gap or a different name", () => {
+    expect(laneChain([forward, gap], 1)).toEqual([1]);
+    expect(laneChain([next, other], 2)).toEqual([2]);
+  });
+
+  it("leaves an unnamed way alone", () => {
+    const neighbor = namedPiece(7, [106.901, 47.93], [106.902, 47.93], undefined, "yes");
+    expect(laneChain([unnamed, neighbor], 6)).toEqual([6]);
+  });
+});
+
+function namedPiece(
+  id: number,
+  start: RoadFeature["coordinates"][number],
+  end: RoadFeature["coordinates"][number],
+  name: string | undefined,
+  oneway: RoadFeature["oneway"],
+): RoadFeature {
+  const coordinates = [start, end];
+  return {
+    id,
+    highway: "primary",
+    highwayClass: "primary",
+    layerGroup: "arterial",
+    ...(name ? { name } : {}),
+    maxspeedKmh: null,
+    lanes: null,
+    oneway,
+    structure: "none",
+    lengthMeters: lengthMeters(coordinates),
+    bbox: bboxOf(coordinates),
+    coordinates,
+  };
+}
 
 function roadBetween(
   id: number,

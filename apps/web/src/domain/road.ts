@@ -252,6 +252,59 @@ export function isSubset(next: readonly string[], previous: readonly string[]): 
   return next.every((value) => known.has(value));
 }
 
+const LANE_JOIN_METERS = 20;
+
+function laneLabel(road: RoadFeature): string | null {
+  const name = road.name?.trim() || road.nameEn?.trim();
+  return name ? name : null;
+}
+
+function endsMeet(a: RoadFeature, b: RoadFeature): boolean {
+  const aEnds = [a.coordinates[0]!, a.coordinates[a.coordinates.length - 1]!];
+  const bEnds = [b.coordinates[0]!, b.coordinates[b.coordinates.length - 1]!];
+  return aEnds.some((left) => bEnds.some((right) => haversineMeters(left, right) <= LANE_JOIN_METERS));
+}
+
+function walkLane(candidates: readonly RoadFeature[], start: RoadFeature): number[] {
+  const seen = new Set<number>([start.id]);
+  const queue = [start];
+  const ids = [start.id];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const next of candidates) {
+      if (seen.has(next.id) || !endsMeet(current, next)) continue;
+      seen.add(next.id);
+      queue.push(next);
+      ids.push(next.id);
+    }
+  }
+  return ids;
+}
+
+export function oppositeOneway(value: Oneway): Oneway | null {
+  if (value === "yes") return "reverse";
+  if (value === "reverse") return "yes";
+  return null;
+}
+
+/** Connected pieces with the same name, class, and direction. Unnamed ways stay alone. */
+export function laneChain(roads: readonly RoadFeature[], wayId: number, oneway?: Oneway): number[] {
+  const start = roads.find((road) => road.id === wayId);
+  if (!start) return [];
+  const direction = oneway ?? start.oneway;
+  const name = laneLabel(start);
+  if (!name) return direction === start.oneway ? [start.id] : [];
+  const same = roads.filter(
+    (road) => laneLabel(road) === name && road.highwayClass === start.highwayClass && road.oneway === direction,
+  );
+  if (direction === start.oneway) return walkLane(same, start);
+  const ids = new Set<number>();
+  for (const seed of same.filter((road) => endsMeet(road, start))) {
+    for (const id of walkLane(same, seed)) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function haversineMeters(a: LngLat, b: LngLat): number {
   const earthRadius = 6_371_000;
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180;

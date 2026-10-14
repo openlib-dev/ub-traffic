@@ -1,5 +1,5 @@
 import type { RoadFeature } from "@/domain/road";
-import { LINK_ID_BASE, MAX_EDITS, SNAP_METERS, snapEnd, type RoadEdit } from "@/domain/scenario";
+import { LINK_ID_BASE, MAX_EDITS, MAX_EDITS_ERROR, SNAP_METERS, snapEnd, type RoadEdit } from "@/domain/scenario";
 import type { LinkKind, VehicleMode } from "@/domain/simulation";
 
 export type DrawTool =
@@ -156,7 +156,7 @@ function finish(
   snappedEnds: SnapResult[],
   name?: string,
 ): { edits: RoadEdit[]; error: string | null; wayId: number | null } {
-  if (edits.length >= MAX_EDITS) return { edits: [...edits], error: "A scenario can change at most 50 roads.", wayId: null };
+  if (edits.length >= MAX_EDITS) return { edits: [...edits], error: MAX_EDITS_ERROR, wayId: null };
   const placed = POINT.has(tool);
   if (!placed && haversine(line[0], line[line.length - 1]) < 1) {
     return { edits: [...edits], error: "Choose two different ends.", wayId: null };

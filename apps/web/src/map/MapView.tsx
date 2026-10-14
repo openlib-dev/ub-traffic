@@ -53,7 +53,7 @@ export function MapView() {
   const roads = useAppStore((state) => state.roads);
   const layers = useAppStore((state) => state.layers);
   const zoom = useAppStore((state) => state.camera.zoom);
-  const selectedRoadId = useAppStore((state) => state.selectedRoadId);
+  const selectedRoadIds = useAppStore((state) => state.selectedRoadIds);
   const loadStatus = useAppStore((state) => state.loadStatus);
   const loadError = useAppStore((state) => state.loadError);
   const retryLoad = useAppStore((state) => state.retryLoad);
@@ -411,7 +411,7 @@ export function MapView() {
       state.setSelectedEdits(next);
       return;
     }
-    selectRoad(roadIdFromFeature(event.features?.[0]));
+    selectRoad(roadIdFromFeature(event.features?.[0]), event.originalEvent.shiftKey);
   }
 
   function onMouseMove(event: MapLayerMouseEvent) {
@@ -536,7 +536,7 @@ export function MapView() {
               beforeId={labelBeforeId}
               layout={roadLineLayout}
               paint={roadSelectionPaint()}
-              filter={["==", ["get", "id"], selectedRoadId ?? -1]}
+              filter={["in", ["get", "id"], ["literal", selectedRoadIds.length > 0 ? selectedRoadIds : [-1]]]}
             />
             <Layer
               id="roads-hit"

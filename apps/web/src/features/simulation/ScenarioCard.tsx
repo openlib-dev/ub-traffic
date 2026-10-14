@@ -59,50 +59,63 @@ function RoadActions({ wayId, name, disabled }: { wayId: number; name: string; d
   const { copy, show } = useI18n();
   const edits = useAppStore((state) => state.edits);
   const setEdits = useAppStore((state) => state.setEdits);
-  const road = useAppStore((state) => state.roads.find((item) => item.id === wayId) ?? null);
+  const roads = useAppStore((state) => state.roads);
+  const selectedRoadIds = useAppStore((state) => state.selectedRoadIds);
+  const road = roads.find((item) => item.id === wayId) ?? null;
   const [lanes, setLanes] = useState(road?.lanes ? String(road.lanes) : "2");
   const [speed, setSpeed] = useState(road?.maxspeedKmh ? String(road.maxspeedKmh) : "40");
   const [modes, setModes] = useState<VehicleMode[]>(["car"]);
   const [error, setError] = useState<string | null>(null);
 
-  function apply(edit: RoadEdit) {
-    if (!road) return;
-    const result = commitEdit(edits, edit, road.bbox);
-    setError(result.error);
-    if (!result.error) setEdits(result.edits);
+  function apply(make: (wayId: number) => RoadEdit) {
+    const ids = selectedRoadIds.length > 0 ? selectedRoadIds : [wayId];
+    let next = edits;
+    for (const id of ids) {
+      const piece = roads.find((item) => item.id === id);
+      if (!piece) continue;
+      const result = commitEdit(next, make(id), piece.bbox);
+      if (result.error) {
+        setError(result.error);
+        if (next !== edits) setEdits(next);
+        return;
+      }
+      next = result.edits;
+    }
+    setError(null);
+    setEdits(next);
   }
 
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-foreground">{name}</p>
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "close" })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "close" }))}>
         {copy.closeRoad}
       </Button>
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "park" })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "park" }))}>
         {copy.parkLane}
       </Button>
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "stall" })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "stall" }))}>
         {copy.stallLane}
       </Button>
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "construction" })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "construction" }))}>
         {copy.roadWork}
       </Button>
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         {copy.laneCount}
         <Input className="h-7 w-14 text-xs" inputMode="numeric" value={lanes} disabled={disabled} onChange={(event) => setLanes(event.target.value)} />
-        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "lanes", lanes: Number(lanes) })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "lanes", lanes: Number(lanes) }))}>
           {copy.setLanes}
         </Button>
       </label>
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         {copy.speedLimit}
         <Input className="h-7 w-14 text-xs" inputMode="numeric" value={speed} disabled={disabled} onChange={(event) => setSpeed(event.target.value)} />
-        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "maxspeed", maxspeedKmh: Number(speed) })}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "maxspeed", maxspeedKmh: Number(speed) }))}>
           {copy.setSpeed}
         </Button>
       </label>
       <ModeChecks modes={modes} disabled={disabled} onChange={setModes} />
-      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply({ wayId, op: "access", modes })}>
+      <Button size="sm" variant="outline" disabled={disabled} onClick={() => apply((id) => ({ wayId: id, op: "access", modes }))}>
         {copy.setAccess}
       </Button>
       {error ? <p className="text-xs text-destructive">{show(error)}</p> : null}

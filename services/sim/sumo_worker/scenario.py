@@ -8,7 +8,7 @@ from pathlib import Path
 
 import math
 
-MAX_EDITS = 50
+MAX_EDITS = 400
 MIN_LANES = 1
 MAX_LANES = 4
 MIN_MAXSPEED_KMH = 10
@@ -27,7 +27,7 @@ def validate_edits(raw: list | None) -> list[dict]:
     if not isinstance(raw, list):
         raise ValueError("Edits must be a list.")
     if len(raw) > MAX_EDITS:
-        raise ValueError("A scenario can change at most 50 roads.")
+        raise ValueError("A scenario can change at most 400 roads.")
     seen: set[int] = set()
     edits: list[dict] = []
     for item in raw:

@@ -11,7 +11,7 @@ const EXACT: Record<string, string> = {
   "Lanes must be a whole number from 1 to 4.": "Эгнээ 1-ээс 4 хүртэлх бүхэл тоо байна.",
   "Speed must be a whole number from 10 to 90 km/h.": "Хурд 10-аас 90 км/ц хүртэлх бүхэл тоо байна.",
   "Choose at least one kind of vehicle.": "Дор хаяж нэг төрлийн тээврийн хэрэгсэл сонгоно уу.",
-  "A scenario can change at most 50 roads.": "Нэг нөхцөл хамгийн ихдээ 50 замыг өөрчилнө.",
+  "A scenario can change at most 400 roads.": "Нэг нөхцөл хамгийн ихдээ 400 замыг өөрчилнө.",
   "Choose two different ends.": "Хоёр өөр үзүүр сонгоно уу.",
   "Click a road on the map. The link has to meet an existing road.":
     "Газрын зураг дээрх замыг дарна уу. Холбоос байгаа замтай нийлнэ.",
