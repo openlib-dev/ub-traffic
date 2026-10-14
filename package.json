@@ -1,0 +1,16 @@
+{
+  "name": "ub-simulation",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "tools/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @ub/web",
+    "test": "npm run test -w @ub/web && npm run test -w @ub/osm",
+    "build": "npm run build -w @ub/web",
+    "roads:fetch": "npm run fetch -w @ub/osm",
+    "district:export": "npm run district -w @ub/osm",
+    "attractors:export": "npm run attractors -w @ub/osm"
+  }
+}

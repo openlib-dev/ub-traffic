@@ -1,0 +1,14 @@
+node_modules
+data/cache
+data/sim
+dist
+dist-ssr
+*.local
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,14 @@
+{
+  "name": "@ub/osm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch": "node fetch-ulaanbaatar-roads.mjs",
+    "district": "node export-district-osm.mjs",
+    "attractors": "node export-attractors.mjs",
+    "test": "node --test attractors.test.mjs"
+  },
+  "dependencies": {
+    "tiny-osmpbf": "^1.0.0-beta.1"
+  }
+}

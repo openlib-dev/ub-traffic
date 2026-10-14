@@ -1,0 +1,10 @@
+services:
+  sim:
+    build:
+      context: ./services/sim
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data/sim:/data
+    environment:
+      SIM_DATA: /data
