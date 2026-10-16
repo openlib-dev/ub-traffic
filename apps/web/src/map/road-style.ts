@@ -176,11 +176,13 @@ export function scenarioLinkPaint(): LinePaint {
       ],
     ],
     "line-width": [
-      "match",
-      ["get", "kind"],
-      "highway",
-      ["interpolate", ["linear"], ["zoom"], 11, 5, 16, 12],
-      ["interpolate", ["linear"], ["zoom"], 11, 2.2, 16, 6],
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      11,
+      ["match", ["get", "kind"], "highway", 5, 2.2],
+      16,
+      ["match", ["get", "kind"], "highway", 12, 6],
     ],
     "line-opacity": 0.95,
   } as unknown as LinePaint;

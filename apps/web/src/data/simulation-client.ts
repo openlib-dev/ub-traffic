@@ -186,11 +186,16 @@ function createRemoteSimulationEngine(base: string): SimulationEngine {
   };
 }
 
-function socketUrl(base: string, runId: string): string {
-  const url = new URL(base);
+export function simulationSocketUrl(base: string, runId: string, origin: string): string {
+  const url = new URL(base, origin);
+  const prefix = url.pathname.replace(/\/$/, "");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `/runs/${runId}/events`;
+  url.pathname = `${prefix}/runs/${runId}/events`;
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+function socketUrl(base: string, runId: string): string {
+  return simulationSocketUrl(base, runId, window.location.origin);
 }

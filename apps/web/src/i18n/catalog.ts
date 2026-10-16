@@ -132,6 +132,8 @@ export type Copy = {
   language: string;
   dashboard: string;
   saveResult: string;
+  savePrompt: string;
+  skipSave: string;
   resultName: string;
   saved: string;
   saveBaseline: string;
@@ -299,6 +301,8 @@ const en: Copy = {
   language: "Language",
   dashboard: "Dashboard",
   saveResult: "Save result",
+  savePrompt: "Save this result?",
+  skipSave: "Skip",
   resultName: "Name",
   saved: "Saved",
   saveBaseline: "Save baseline",
@@ -466,6 +470,8 @@ const mn: Copy = {
   language: "Хэл",
   dashboard: "Хяналтын самбар",
   saveResult: "Үр дүн хадгалах",
+  savePrompt: "Энэ үр дүнг хадгалах уу?",
+  skipSave: "Алгасах",
   resultName: "Нэр",
   saved: "Хадгалсан",
   saveBaseline: "Суурийг хадгалах",

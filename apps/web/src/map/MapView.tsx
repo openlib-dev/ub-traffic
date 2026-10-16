@@ -39,6 +39,7 @@ import { SNAP_METERS } from "@/domain/scenario";
 import type { CongestionLevel, RoadEdit, SimulationFrame } from "@/domain/simulation";
 import { useI18n } from "@/i18n/use-i18n";
 import { EditorToolbar } from "@/map/EditorToolbar";
+import { RunOverlay } from "@/map/RunOverlay";
 import { TemplatePanel } from "@/map/TemplatePanel";
 import { useAppStore } from "@/state/use-app-store";
 
@@ -690,6 +691,7 @@ export function MapView() {
       ) : null}
       <EditorToolbar />
       <TemplatePanel />
+      <RunOverlay />
       {styleError && style ? (
         <div className="absolute bottom-8 left-3 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs">
           <p>{show(styleError)}</p>

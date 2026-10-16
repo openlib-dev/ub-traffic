@@ -13,6 +13,7 @@ import {
 import type { SavedRecord } from "@/domain/saved-result";
 import type { RoadTemplate } from "@/domain/template";
 import type { RoadEdit, RunStatus, SimulationEngine, SimulationFrame, SimulationSpeed } from "@/domain/simulation";
+import { loadLocalRoads, localRoadsReady, roadsForLane } from "@/data/local-roads";
 import { updateTemplate, type SimulationAvailability } from "@/data/simulation-client";
 import { rememberEdits, redoEdits, undoEdits, type DrawTool } from "@/domain/editor";
 import type { Locale } from "@/i18n/catalog";
@@ -74,6 +75,7 @@ type AppState = {
   playing: boolean;
   playbackSpeed: SimulationSpeed;
   comparison: Comparison | null;
+  savePrompt: boolean;
   dashboardReference: SavedRecord | null;
   dashboardChanged: SavedRecord | null;
   dashboardChartPair: readonly [SavedRecord, SavedRecord] | null;
@@ -116,6 +118,7 @@ type AppState = {
   setPlaying: (playing: boolean) => void;
   setPlaybackSpeed: (playbackSpeed: SimulationSpeed) => void;
   clearPlayback: () => void;
+  dismissSavePrompt: () => void;
   setEdits: (edits: RoadEdit[]) => void;
   setCommuteAttractors: (commuteAttractors: boolean) => void;
   setEditorTool: (editorTool: DrawTool) => void;
@@ -145,7 +148,7 @@ function storedLocale(): Locale {
   return "mn";
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   locale: storedLocale(),
   setLocale: (locale) => {
     try {
@@ -180,6 +183,7 @@ export const useAppStore = create<AppState>((set) => ({
   playing: false,
   playbackSpeed: 1,
   comparison: null,
+  savePrompt: false,
   dashboardReference: null,
   dashboardChanged: null,
   dashboardChartPair: null,
@@ -215,19 +219,17 @@ export const useAppStore = create<AppState>((set) => ({
   ingestRoads: (incoming, view) =>
     set((state) => {
       const roads = pruneRoads(mergeRoads(state.roads, incoming), view);
-      const selectedRoadIds = state.selectedRoadIds.filter((id) => roads.some((road) => road.id === id));
-      const selectedRoadId = selectedRoadIds.includes(state.selectedRoadId ?? -1) ? state.selectedRoadId : null;
-      return { roads, selectedRoadId, selectedRoadIds, loadStatus: "ready", loadError: null };
+      return { roads, loadStatus: "ready", loadError: null };
     }),
-  selectRoad: (id, addOpposite = false) =>
-    set((state) => {
-      if (id == null) return { selectedRoadId: null, selectedRoadIds: [] };
-      const chain = laneChain(state.roads, id);
-      const opposite = oppositeOneway(state.roads.find((road) => road.id === id)?.oneway ?? "unknown");
-      const added = addOpposite && opposite ? laneChain(state.roads, id, opposite) : [];
-      const selectedRoadIds = addOpposite ? [...new Set([...state.selectedRoadIds, ...chain, ...added])] : chain;
-      return { selectedRoadId: id, selectedRoadIds, selectedEditIds: [] };
-    }),
+  selectRoad: (id, addOpposite = false) => {
+    const ready = localRoadsReady();
+    set((state) => laneSelection(state.roads, state.selectedRoadIds, id, addOpposite));
+    if (ready || id == null) return;
+    void loadLocalRoads().then(() => {
+      if (get().selectedRoadId !== id) return;
+      set((state) => laneSelection(state.roads, state.selectedRoadIds, id, addOpposite));
+    });
+  },
   setLoadStatus: (loadStatus, loadError = null) => set({ loadStatus, loadError }),
   retryLoad: () => set((state) => ({ retryToken: state.retryToken + 1, loadError: null })),
   setSimulationConnection: (engine, simulationAvailability) => set({ engine, simulationAvailability }),
@@ -242,6 +244,7 @@ export const useAppStore = create<AppState>((set) => ({
       frameIndex: 0,
       playing: false,
       comparison: null,
+      savePrompt: false,
     }),
   setRunId: (runId) => set({ runId }),
   updateProgress: (progress, progressMessage) => set({ progress, progressMessage, runStatus: "running" }),
@@ -254,6 +257,7 @@ export const useAppStore = create<AppState>((set) => ({
       frameIndex: 0,
       playing: false,
       comparison: null,
+      savePrompt: frames.length > 0,
     }),
   finishComparison: (baseline, scenario) =>
     set({
@@ -264,6 +268,7 @@ export const useAppStore = create<AppState>((set) => ({
       frameIndex: 0,
       playing: false,
       comparison: { baseline, scenario, side: "scenario" },
+      savePrompt: scenario.length > 0,
     }),
   setDashboardSelection: (dashboardReference, dashboardChanged) => set({ dashboardReference, dashboardChanged }),
   setDashboardChartPair: (dashboardChartPair) => set({ dashboardChartPair }),
@@ -347,7 +352,9 @@ export const useAppStore = create<AppState>((set) => ({
       frameIndex: 0,
       playing: false,
       comparison: null,
+      savePrompt: false,
     }),
+  dismissSavePrompt: () => set({ savePrompt: false }),
   setEdits: (edits) =>
     set((state) => {
       const active = editableTemplate(state);
@@ -402,6 +409,21 @@ export const useAppStore = create<AppState>((set) => ({
     }),
   setDrawError: (drawError) => set({ drawError }),
 }));
+
+function laneSelection(
+  loaded: readonly RoadFeature[],
+  current: readonly number[],
+  id: number | null,
+  addOpposite: boolean,
+) {
+  if (id == null) return { selectedRoadId: null, selectedRoadIds: [] as number[] };
+  const pool = roadsForLane(loaded);
+  const chain = laneChain(pool, id);
+  const opposite = oppositeOneway(pool.find((road) => road.id === id)?.oneway ?? "unknown");
+  const added = addOpposite && opposite ? laneChain(pool, id, opposite) : [];
+  const selectedRoadIds = addOpposite ? [...new Set([...current, ...chain, ...added])] : chain;
+  return { selectedRoadId: id, selectedRoadIds, selectedEditIds: [] as number[] };
+}
 
 function editableTemplate(state: { templateBase: boolean; mapTemplates: RoadTemplate[] }): RoadTemplate | null {
   if (state.templateBase || state.mapTemplates.length !== 1) return null;

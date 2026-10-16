@@ -19,7 +19,7 @@ Interactive map for the OpenStreetMap road network in Ulaanbaatar, with one esti
 - A browser
 - Docker, for the SUMO worker
 
-Public Overpass is only used when the map moves outside the Ulaanbaatar extract. Nominatim is used for place search. Both are rate-limited. A later phase can replace the extract with PostGIS without changing the map UI.
+Public Overpass is only used when the map moves outside the Ulaanbaatar extract. Nominatim is used for place search. Both are rate-limited.
 
 ## Setup
 
@@ -71,14 +71,10 @@ Without a finished run, road color is the OpenStreetMap class (motorway, primary
 
 The status bar stays on "No active simulation" until a run is in progress or a recorded frame is showing.
 
-## Later phases
+## Editing and comparison
 
-The web app talks to roads through `RoadNetworkSource` (`apps/web/src/domain/road.ts`). Inside the Ulaanbaatar extract it uses `createLocalRoadSource`. Outside that box it uses `createOverpassRoadSource`.
+The base map is the OpenStreetMap extract and stays locked. A template is a named copy of that network. Drawing and road actions write only while one template is open, and those edits are a diff: the extract file is not rewritten. Comparing two templates is read-only.
 
-`SimulationEngine` (`apps/web/src/domain/simulation.ts`) is the SUMO port. The Python worker in `services/sim` implements it for the Sukhbaatar preset and streams `SimulationEvent` values. A Go API can sit in front of that schema later.
+**Compare** runs the same clock, vehicle count, and seed on the unchanged network, then on the scenario. A refresh continues the half that is still running, and starts the second half when the first has already finished. While a run is going, the map shows that progress and a cancel button.
 
-- **Phase 3 — Infrastructure editor.** Road edits are a scenario diff. The OpenStreetMap extract stays unchanged. This is when a Go API and PostGIS start storing scenarios.
-- **Phase 4 — Scenario comparison.** The same demand and seed run on a baseline and a modified network.
-- **Phase 5 — Analytics.** Bottleneck ranking, charts, and a heatmap from the same segment metrics, then imported counts. Deck.gl only if MapLibre cannot hold the volume.
-
-Go, PostgreSQL, Redis, and Recharts are not part of Phase 2. Do not substitute mock metrics for a run that did not happen.
+The dashboard ranks roads by recorded severe seconds from a finished run. Demand stays synthetic. Go, PostGIS, Redis, and Recharts are not part of this repository.

@@ -7,6 +7,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+from sumo_worker.cache import route_cache_key, weight_cache_key
+from sumo_worker.geo import load_projector
 from sumo_worker.metrics import clock_label, segment_metrics, simulation_window
 from sumo_worker.network import load_edge_index
 from sumo_worker.scenario import (
@@ -72,11 +74,9 @@ def execute_run(config: dict, cancel: threading.Event, progress) -> dict:
     counts = trip_split(vehicles, modes_in_edits(edits))
     if commute:
         progress(0.18, f"Generating estimated demand toward offices and universities ({demand_phrase(counts)}, seed {seed})")
-        weights = _commute_weights(net_path, run_dir)
     else:
         progress(0.18, f"Generating estimated demand ({demand_phrase(counts)}, seed {seed})")
-        weights = None
-    _generate_routes(net_path, trips, routes, begin, finish, counts, seed, cancel, weights)
+    _ensure_routes(net_path, trips, routes, begin, finish, counts, seed, commute, cancel)
     trip_count = _count_vehicles(routes)
     if trip_count == 0:
         raise RuntimeError("SUMO could not place passenger-car trips on this city network.")
@@ -167,9 +167,32 @@ def _convert(osm_path: Path, net_path: Path, cancel: threading.Event) -> None:
     )
 
 
-def _commute_weights(net_path: Path, run_dir: Path) -> Path:
+def _ensure_routes(net_path, trips, routes, begin, finish, counts, seed, commute, cancel) -> None:
+    """Reuse a finished route file when the network, clock, demand, and seed match."""
+    if commute and not ATTRACTORS_PATH.is_file():
+        raise RuntimeError("Office and university locations are missing. Run npm run attractors:export.")
+    attractors = ATTRACTORS_PATH if commute else None
+    key = route_cache_key(net_path, begin, finish, counts, seed, commute, attractors)
+    cached = DATA / "runs" / "routes" / f"{key}.rou.xml"
+    if cached.is_file() and _count_vehicles(cached) > 0:
+        shutil.copyfile(cached, routes)
+        return
+    weights = _commute_weights(net_path) if commute else None
+    _generate_routes(net_path, trips, routes, begin, finish, counts, seed, cancel, weights)
+    if _count_vehicles(routes) > 0:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cached.with_name(cached.name + ".tmp")
+        shutil.copyfile(routes, temporary)
+        temporary.replace(cached)
+
+
+def _commute_weights(net_path: Path) -> Path:
     if not ATTRACTORS_PATH.is_file():
         raise RuntimeError("Office and university locations are missing. Run npm run attractors:export.")
+    key = weight_cache_key(net_path, ATTRACTORS_PATH)
+    prefix = DATA / "runs" / "weights" / key
+    if prefix.with_suffix(".src.xml").is_file() and prefix.with_suffix(".dst.xml").is_file():
+        return prefix
     catalog = json.loads(ATTRACTORS_PATH.read_text(encoding="utf-8"))
     places = catalog.get("places") or []
     if not places:
@@ -195,7 +218,7 @@ def _commute_weights(net_path: Path, run_dir: Path) -> Path:
         if "residential" in (edge.getType() or "") or "living" in (edge.getType() or "")
     }
     edge_ids = [edge.getID() for edge in usable]
-    prefix = run_dir / "commute"
+    prefix.parent.mkdir(parents=True, exist_ok=True)
     write_edge_weights(prefix.with_suffix(".src.xml"), source_weights(edge_ids, residential))
     write_edge_weights(prefix.with_suffix(".dst.xml"), sink_weights(edge_ids, attractors))
     return prefix
@@ -232,9 +255,12 @@ def _generate_routes(net, trips, routes, begin, finish, counts, seed, cancel, we
                 VCLASS[mode],
                 "--prefix",
                 mode,
-                "--validate",
                 "--min-distance",
                 "20" if mode == "train" else "50",
+                "--duarouter-routing-threads",
+                str(max(1, min(os.cpu_count() or 1, 8))),
+                "--duarouter-routing-algorithm",
+                "CH",
             ]
             + (["--weights-prefix", str(weights)] if weights else []),
             cancel,
@@ -256,10 +282,13 @@ def _merge_routes(parts: list[Path], dest: Path) -> None:
 
 def _simulate(net, routes, begin, finish, cancel, progress, edits: list[dict] | None = None, coverage: str = "never") -> list[dict]:
     import traci
+    import traci.constants as tc
 
     index = load_edge_index(str(net))
     if not index:
         raise RuntimeError("The SUMO network has no edges tied to an OpenStreetMap way.")
+    project = load_projector(Path(net))
+    vehicle_vars = (tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_ROAD_ID, tc.VAR_SPEED)
 
     traci.start(
         [
@@ -287,6 +316,7 @@ def _simulate(net, routes, begin, finish, cancel, progress, edits: list[dict] | 
     curb_state: dict[str, bool] = {}
     signals = slow_signal_ids(Path(net)) if coverage == "switch" else []
     signal_state: dict[str, str] = {}
+    subscribed: set[str] = set()
     try:
         while traci.simulation.getTime() < finish:
             if cancel.is_set():
@@ -300,7 +330,7 @@ def _simulate(net, routes, begin, finish, cancel, progress, edits: list[dict] | 
             now = traci.simulation.getTime()
             _apply_zaisan(traci, signals, now, signal_state)
             _apply_curb(traci, curb, now, begin, finish, curb_state)
-            frames.append(_frame(traci, index, now))
+            frames.append(_frame(traci, index, now, project, subscribed, vehicle_vars))
             if len(frames) % 15 == 0:
                 fraction = 0.28 + 0.67 * min((now - begin) / duration, 1)
                 progress(fraction, f"Simulating {clock_label(now)}")
@@ -359,23 +389,51 @@ def _apply_curb(traci, lanes: list[tuple[str, str]], now: float, begin: int, fin
         state[lane_id] = closed
 
 
-def _frame(traci, index, now: float) -> dict:
+def _frame(traci, index, now: float, project, subscribed: set[str], vehicle_vars: tuple[int, ...]) -> dict:
+    for veh_id in traci.simulation.getDepartedIDList():
+        if veh_id not in subscribed:
+            traci.vehicle.subscribe(veh_id, vehicle_vars)
+            subscribed.add(veh_id)
+    for veh_id in traci.simulation.getArrivedIDList():
+        subscribed.discard(veh_id)
+
+    active = set(traci.vehicle.getIDList())
+    results = traci.vehicle.getAllSubscriptionResults()
+    states = []
+    seen: set[str] = set()
+    for veh_id, values in results.items():
+        state = _state(veh_id, values, vehicle_vars)
+        if state is None or veh_id not in active:
+            continue
+        states.append(state)
+        seen.add(veh_id)
+    for veh_id in traci.simulation.getDepartedIDList():
+        if veh_id in seen or veh_id not in active:
+            continue
+        values = {
+            vehicle_vars[0]: traci.vehicle.getPosition(veh_id),
+            vehicle_vars[1]: traci.vehicle.getAngle(veh_id),
+            vehicle_vars[2]: traci.vehicle.getRoadID(veh_id),
+            vehicle_vars[3]: traci.vehicle.getSpeed(veh_id),
+        }
+        state = _state(veh_id, values, vehicle_vars)
+        if state is not None:
+            states.append(state)
+
     vehicles = []
     speeds: dict[str, list[float]] = {}
-    for veh_id in traci.vehicle.getIDList():
-        x, y = traci.vehicle.getPosition(veh_id)
-        lon, lat = _lon_lat(traci, x, y)
+    for veh_id, x, y, bearing, edge_id, speed in states:
+        lon, lat = _lon_lat(project, x, y)
         vehicles.append(
             {
                 "id": veh_id,
                 "longitude": round(lon, 6),
                 "latitude": round(lat, 6),
-                "bearing": round(traci.vehicle.getAngle(veh_id), 1),
+                "bearing": round(bearing, 1),
             }
         )
-        edge_id = traci.vehicle.getRoadID(veh_id)
-        if edge_id and not edge_id.startswith(":"):
-            speeds.setdefault(edge_id, []).append(traci.vehicle.getSpeed(veh_id))
+        if edge_id and not str(edge_id).startswith(":"):
+            speeds.setdefault(str(edge_id), []).append(float(speed))
 
     samples = []
     for edge_id, edge_speeds in speeds.items():
@@ -393,8 +451,18 @@ def _frame(traci, index, now: float) -> dict:
     }
 
 
-def _lon_lat(traci, x: float, y: float) -> tuple[float, float]:
-    lon, lat = traci.simulation.convertGeo(x, y)
+def _state(veh_id: str, values: dict, vehicle_vars: tuple[int, ...]) -> tuple | None:
+    position = values.get(vehicle_vars[0])
+    angle = values.get(vehicle_vars[1])
+    edge_id = values.get(vehicle_vars[2])
+    speed = values.get(vehicle_vars[3])
+    if position is None or angle is None or edge_id is None or speed is None:
+        return None
+    return (veh_id, float(position[0]), float(position[1]), float(angle), edge_id, float(speed))
+
+
+def _lon_lat(project, x: float, y: float) -> tuple[float, float]:
+    lon, lat = project(x, y)
     if _in_mongolia(lon, lat):
         return lon, lat
     if _in_mongolia(lat, lon):
@@ -434,3 +502,19 @@ def write_timeline(path: Path, run_id: str, timeline: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"runId": run_id, **timeline}
     path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+
+
+def stored_timeline(directory: Path, run_id: str) -> dict | None:
+    """A finished run kept on disk after a later run replaced it in memory."""
+    if not run_id.isalnum() or len(run_id) > 32:
+        return None
+    path = directory / f"{run_id}.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("runId") != run_id or not isinstance(payload.get("frames"), list):
+        return None
+    return payload

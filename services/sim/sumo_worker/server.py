@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from sumo_worker.metrics import simulation_window
-from sumo_worker.runner import DATA, CancelledRun, execute_run, write_timeline
+from sumo_worker.runner import DATA, CancelledRun, execute_run, stored_timeline, write_timeline
 from sumo_worker.saved import delete_saved, list_saved, parse_saved_body, read_saved, write_saved
 from sumo_worker.scenario import validate_edits
 from sumo_worker.templates import (
@@ -206,10 +206,15 @@ def remove_template(template_id: str):
 
 @app.get("/runs/{run_id}/timeline")
 def timeline(run_id: str):
-    record = _record(run_id)
-    if record.timeline is None:
-        raise HTTPException(status_code=409, detail="The simulation has not finished.")
-    return record.timeline
+    record = state.run
+    if record is not None and record.run_id == run_id:
+        if record.timeline is None:
+            raise HTTPException(status_code=409, detail="The simulation has not finished.")
+        return record.timeline
+    stored = stored_timeline(DATA / "runs", run_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Unknown run.")
+    return stored
 
 
 @app.websocket("/runs/{run_id}/events")

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { describeSevereDifference } from "@/domain/comparison";
@@ -45,6 +46,18 @@ export function SavedDashboard({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [chartId, setChartId] = useState<string | null>(null);
+  const savePrompt = useAppStore((state) => state.savePrompt);
+  const dismissSavePrompt = useAppStore((state) => state.dismissSavePrompt);
+  const finishedFrames = useAppStore((state) => state.frames);
+  const resultFrames = finishedFrames.length > 0 ? finishedFrames : frames;
+
+  useEffect(() => {
+    if (!savePrompt) return;
+    const next = config();
+    setName(`${next.startTime}–${next.endTime}`);
+    setBaselineName("");
+    setError(null);
+  }, [savePrompt]);
 
   async function refresh() {
     setItems(await listSavedResults());
@@ -55,15 +68,24 @@ export function SavedDashboard({
     void refresh().catch(() => setError("The saved results could not be read."));
   }, [availability]);
 
-  async function save(label: string, nextConfig: SimulationConfig, source: readonly SimulationFrame[]) {
-    if (!label.trim() || source.length === 0) return;
+  async function saveFinished() {
+    const scenarioName = name.trim();
+    const baseName = baselineName.trim();
+    if (!scenarioName && !baseName) return;
     setBusy(true);
     setError(null);
     try {
-      await createSavedResult(savedRequestBody(label, nextConfig, source, names));
+      const next = config();
+      if (scenarioName) await createSavedResult(savedRequestBody(scenarioName, next, resultFrames, names));
+      if (baseName && baselineFrames) {
+        await createSavedResult(
+          savedRequestBody(baseName, { ...next, edits: [], commuteAttractors: false }, baselineFrames, names),
+        );
+      }
       setName("");
       setBaselineName("");
       await refresh();
+      dismissSavePrompt();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The result could not be saved.");
     } finally {
@@ -104,44 +126,43 @@ export function SavedDashboard({
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-[11px] font-medium tracking-[0.14em] text-muted-foreground uppercase">{copy.dashboard}</h2>
-      {frames.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-muted-foreground">{copy.resultName}</span>
-            <Input className="h-7 px-2 text-xs" value={name} disabled={disabled || busy} onChange={(event) => setName(event.target.value)} />
-          </label>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={disabled || busy || name.trim().length === 0}
-            onClick={() => void save(name, config(), frames)}
-          >
-            {baselineFrames ? copy.saveScenario : copy.saveResult}
-          </Button>
-          {baselineFrames ? (
-            <>
-              <Input
-                className="h-7 px-2 text-xs"
-                aria-label={copy.saveBaseline}
-                placeholder={copy.saveBaseline}
-                value={baselineName}
-                disabled={disabled || busy}
-                onChange={(event) => setBaselineName(event.target.value)}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={disabled || busy || baselineName.trim().length === 0}
-                onClick={() =>
-                  void save(baselineName, { ...config(), edits: [], commuteAttractors: false }, baselineFrames)
-                }
+      {savePrompt && resultFrames.length > 0
+        ? createPortal(
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="save-result-title">
+              <form
+                className="flex w-[min(22rem,100%)] flex-col gap-3 rounded-lg border border-border bg-background px-5 py-4 shadow-lg"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveFinished();
+                }}
               >
-                {copy.saveBaseline}
-              </Button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+                <h2 id="save-result-title" className="text-sm font-medium">
+                  {copy.savePrompt}
+                </h2>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] text-muted-foreground">{baselineFrames ? copy.saveScenario : copy.resultName}</span>
+                  <Input className="h-8" value={name} disabled={disabled || busy} autoFocus onChange={(event) => setName(event.target.value)} />
+                </label>
+                {baselineFrames ? (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-muted-foreground">{copy.saveBaseline}</span>
+                    <Input className="h-8" value={baselineName} disabled={disabled || busy} onChange={(event) => setBaselineName(event.target.value)} />
+                  </label>
+                ) : null}
+                {error ? <p className="text-xs text-destructive">{show(error)}</p> : null}
+                <div className="flex justify-end gap-2">
+                  <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={dismissSavePrompt}>
+                    {copy.skipSave}
+                  </Button>
+                  <Button type="submit" size="sm" disabled={disabled || busy || (name.trim().length === 0 && baselineName.trim().length === 0)}>
+                    {copy.saveResult}
+                  </Button>
+                </div>
+              </form>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {items.length === 0 ? <p className="text-xs text-muted-foreground">{copy.noSaved}</p> : null}
       <ul className="flex flex-col gap-2">

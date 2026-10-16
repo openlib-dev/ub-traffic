@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { overpassQuery } from "@/data/overpass-query";
 import { parseNominatimResults } from "@/data/nominatim";
-import { parseLocalExtract, roadsInView } from "@/data/local-roads";
+import { parseLocalExtract, roadsForLane, roadsInView } from "@/data/local-roads";
+import { laneChain, type RoadFeature } from "@/domain/road";
 import { roadsFromOverpassPayload } from "@/data/overpass-road-source";
 
 describe("overpassQuery", () => {
@@ -98,3 +99,29 @@ describe("local extract", () => {
     expect(visible[0]?.maxspeedKmh).toBe(60);
   });
 });
+
+describe("roadsForLane", () => {
+  it("joins a named lane through pieces that are outside the loaded view", () => {
+    const visible = piece(1, [106.9, 47.92], [106.901, 47.92]);
+    const beyond = piece(2, [106.901, 47.92], [106.95, 47.92]);
+    const pool = roadsForLane([visible], [visible, beyond]);
+    expect(laneChain(pool, 1).sort()).toEqual([1, 2]);
+  });
+});
+
+function piece(id: number, start: RoadFeature["coordinates"][number], end: RoadFeature["coordinates"][number]): RoadFeature {
+  return {
+    id,
+    highway: "primary",
+    highwayClass: "primary",
+    layerGroup: "arterial",
+    name: "Peace Avenue",
+    maxspeedKmh: 60,
+    lanes: 2,
+    oneway: "yes",
+    structure: "none",
+    lengthMeters: 80,
+    bbox: { west: start[0], south: start[1], east: end[0], north: end[1] },
+    coordinates: [start, end],
+  };
+}

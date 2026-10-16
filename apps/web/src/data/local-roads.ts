@@ -1,6 +1,7 @@
 import {
   bboxIntersects,
   highwayFiltersForLoad,
+  mergeRoads,
   roadFromOverpassWay,
   type BBox,
   type RoadFeature,
@@ -16,6 +17,29 @@ export type LocalExtract = {
 const EXTRACT_URL = "/data/ulaanbaatar-roads.json";
 
 let extractRequest: Promise<LocalExtract | null> | null = null;
+let cachedExtract: LocalExtract | null = null;
+
+/** Roads from the city file, once that file has loaded. */
+export function cachedLocalRoads(): readonly RoadFeature[] | null {
+  return cachedExtract?.roads ?? null;
+}
+
+export function localRoadsReady(): boolean {
+  return cachedExtract !== null;
+}
+
+export function loadLocalRoads(): Promise<readonly RoadFeature[] | null> {
+  return loadBundledExtract().then((extract) => extract?.roads ?? null);
+}
+
+/** City-file roads plus anything loaded from outside the extract, so a lane can cross the current view. */
+export function roadsForLane(
+  loaded: readonly RoadFeature[],
+  catalog: readonly RoadFeature[] | null = cachedLocalRoads(),
+): RoadFeature[] {
+  if (!catalog) return [...loaded];
+  return mergeRoads([...catalog], [...loaded]);
+}
 
 export function createLocalRoadSource(
   loadExtract: () => Promise<LocalExtract | null> = loadBundledExtract,
@@ -87,7 +111,9 @@ function loadBundledExtract(): Promise<LocalExtract | null> {
   extractRequest ??= fetch(EXTRACT_URL)
     .then(async (response) => {
       if (!response.ok) return null;
-      return parseLocalExtract(await response.json());
+      const extract = parseLocalExtract(await response.json());
+      if (extract) cachedExtract = extract;
+      return extract;
     })
     .catch(() => null);
   return extractRequest;

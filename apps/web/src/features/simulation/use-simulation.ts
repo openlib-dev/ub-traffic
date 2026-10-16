@@ -3,10 +3,18 @@ import { connectSimulationEngine, fetchActiveRun, fetchSimulationTimeline } from
 import { ULAANBAATAR } from "@/domain/city";
 import { MORNING_PEAK } from "@/domain/preset";
 import type { SimulationConfig, SimulationEvent, SimulationFrame } from "@/domain/simulation";
+import {
+  clearComparisonSession,
+  planResume,
+  readComparisonSession,
+  writeComparisonSession,
+  type ComparisonSession,
+} from "@/features/simulation/comparison-session";
 import { useAppStore } from "@/state/use-app-store";
 
 let unsubscribe: (() => void) | null = null;
 let cancelRequested = false;
+let resumeGeneration = 0;
 
 class RunCancelled extends Error {
   constructor() {
@@ -19,17 +27,27 @@ export function useSimulation() {
   const setSimulationConnection = useAppStore((state) => state.setSimulationConnection);
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = ++resumeGeneration;
     void connectSimulationEngine().then(async (result) => {
-      if (cancelled) return;
+      if (generation !== resumeGeneration) return;
       setSimulationConnection(result.engine, result.availability);
       if (!result.engine) return;
       const active = await fetchActiveRun().catch(() => null);
-      if (cancelled || !active || useAppStore.getState().runStatus === "running") return;
-      resumeActiveRun(active);
+      if (generation !== resumeGeneration || useAppStore.getState().runStatus === "running") return;
+      const plan = planResume(active, readComparisonSession());
+      if (plan.kind === "single") {
+        clearComparisonSession();
+        resumeActiveRun(plan);
+        return;
+      }
+      if (plan.kind === "baseline" || plan.kind === "scenario" || plan.kind === "scenario-next") {
+        void continueComparison(plan, generation);
+        return;
+      }
+      clearComparisonSession();
     });
     return () => {
-      cancelled = true;
+      resumeGeneration += 1;
       unsubscribe?.();
       unsubscribe = null;
     };
@@ -54,40 +72,91 @@ export function usePlaybackClock() {
   }, [playbackSpeed, playing]);
 }
 
-function resumeActiveRun(active: {
-  runId: string;
-  status: "running" | "ready" | "cancelled" | "error";
-  fraction: number;
-  message: string;
-}) {
+function resumeActiveRun(active: { runId: string; fraction: number; message: string }) {
   const { engine } = useAppStore.getState();
-  if (!engine || active.status !== "running") return;
+  if (!engine) return;
   useAppStore.getState().beginRun();
   useAppStore.getState().setRunId(active.runId);
   useAppStore.getState().updateProgress(active.fraction, active.message || "Simulation running");
-  unsubscribe?.();
-  unsubscribe = engine.subscribe(active.runId, (event) =>
-    onRunEvent(
-      active.runId,
-      event,
-      (fraction, message) => useAppStore.getState().updateProgress(fraction, message),
-      (frames) => {
-        if (useAppStore.getState().runStatus === "running" && useAppStore.getState().runId === active.runId) {
-          useAppStore.getState().finishRun(frames);
-        }
-      },
-      (error) => {
-        if (useAppStore.getState().runId !== active.runId) return;
-        settleRunError(error);
-      },
-    ),
-  );
+  void resumeToFrames(active.runId, (fraction, message) => useAppStore.getState().updateProgress(fraction, message))
+    .then((frames) => {
+      if (useAppStore.getState().runStatus === "running" && useAppStore.getState().runId === active.runId) {
+        useAppStore.getState().finishRun(frames);
+      }
+    })
+    .catch((error: unknown) => {
+      if (useAppStore.getState().runId !== active.runId) return;
+      settleRunError(error);
+    });
+}
+
+async function continueComparison(
+  plan:
+    | { kind: "baseline"; session: ComparisonSession; fraction: number; message: string }
+    | { kind: "scenario"; session: ComparisonSession; fraction: number; message: string }
+    | { kind: "scenario-next"; session: ComparisonSession },
+  generation: number,
+) {
+  const session = plan.session;
+  writeComparisonSession(session);
+  try {
+    if (plan.kind === "scenario") {
+      const baselineId = session.baselineRunId;
+      const scenarioId = session.scenarioRunId;
+      if (!baselineId || !scenarioId) throw new Error("Simulation failed.");
+      useAppStore.getState().beginRun();
+      useAppStore.getState().setRunId(scenarioId);
+      scenarioProgress(plan.fraction, plan.message || "Simulation running");
+      const baseline = (await fetchSimulationTimeline(baselineId)).frames;
+      if (generation !== resumeGeneration) return;
+      const scenario = await resumeToFrames(scenarioId, scenarioProgress);
+      if (useAppStore.getState().runStatus !== "running") return;
+      useAppStore.getState().finishComparison(baseline, scenario);
+      clearComparisonSession();
+      return;
+    }
+    const baseline =
+      plan.kind === "baseline"
+        ? await followHalf(session.baselineRunId!, plan.fraction, plan.message)
+        : await finishedBaseline(session.baselineRunId!);
+    if (generation !== resumeGeneration || useAppStore.getState().runStatus !== "running") return;
+    const scenario = await runToFrames(session.config, scenarioProgress, (runId) => {
+      writeComparisonSession({ ...session, scenarioRunId: runId });
+    });
+    if (useAppStore.getState().runStatus !== "running") return;
+    useAppStore.getState().finishComparison(baseline, scenario);
+    clearComparisonSession();
+  } catch (error) {
+    settleRunError(error);
+  }
+}
+
+async function finishedBaseline(runId: string): Promise<SimulationFrame[]> {
+  useAppStore.getState().beginRun();
+  useAppStore.getState().updateProgress(0.5, "Scenario: Starting simulation");
+  return (await fetchSimulationTimeline(runId)).frames;
+}
+
+function followHalf(runId: string, fraction: number, message: string): Promise<SimulationFrame[]> {
+  useAppStore.getState().beginRun();
+  useAppStore.getState().setRunId(runId);
+  baselineProgress(fraction, message || "Simulation running");
+  return resumeToFrames(runId, baselineProgress);
+}
+
+function baselineProgress(fraction: number, message: string) {
+  useAppStore.getState().updateProgress(fraction * 0.5, `Baseline: ${message}`);
+}
+
+function scenarioProgress(fraction: number, message: string) {
+  useAppStore.getState().updateProgress(0.5 + fraction * 0.5, `Scenario: ${message}`);
 }
 
 export async function startMorningPeak(config: SimulationConfig) {
   const { engine, runStatus } = useAppStore.getState();
   if (!engine || runStatus === "running") return;
   cancelRequested = false;
+  clearComparisonSession();
   focusCity();
   useAppStore.getState().beginRun();
   try {
@@ -106,19 +175,23 @@ export async function compareMorningPeak(config: SimulationConfig) {
   if (!engine || runStatus === "running") return;
   if ((config.edits?.length ?? 0) === 0 && !config.commuteAttractors) return;
   cancelRequested = false;
+  const session: ComparisonSession = { config, baselineRunId: null, scenarioRunId: null };
+  writeComparisonSession(session);
   focusCity();
   useAppStore.getState().beginRun();
   try {
-    const baseline = await runToFrames(
-      { ...config, edits: [], commuteAttractors: false },
-      (fraction, message) => useAppStore.getState().updateProgress(fraction * 0.5, `Baseline: ${message}`),
-    );
+    const baseline = await runToFrames({ ...config, edits: [], commuteAttractors: false }, baselineProgress, (runId) => {
+      session.baselineRunId = runId;
+      writeComparisonSession(session);
+    });
     if (useAppStore.getState().runStatus !== "running") return;
-    const scenario = await runToFrames(config, (fraction, message) => {
-      useAppStore.getState().updateProgress(0.5 + fraction * 0.5, `Scenario: ${message}`);
+    const scenario = await runToFrames(config, scenarioProgress, (runId) => {
+      session.scenarioRunId = runId;
+      writeComparisonSession(session);
     });
     if (useAppStore.getState().runStatus !== "running") return;
     useAppStore.getState().finishComparison(baseline, scenario);
+    clearComparisonSession();
   } catch (error) {
     settleRunError(error);
   }
@@ -134,6 +207,7 @@ export async function cancelMorningPeak() {
   try {
     await engine.cancel(runId);
   } catch (error) {
+    clearComparisonSession();
     useAppStore.getState().failRun(error instanceof Error ? error.message : "Could not cancel the simulation.");
   }
 }
@@ -150,6 +224,7 @@ function focusCity() {
 }
 
 function settleRunError(error: unknown) {
+  clearComparisonSession();
   if (useAppStore.getState().runStatus !== "running") return;
   if (error instanceof RunCancelled) {
     useAppStore.getState().markCancelled();
@@ -161,6 +236,7 @@ function settleRunError(error: unknown) {
 function runToFrames(
   config: SimulationConfig,
   onProgress: (fraction: number, message: string) => void,
+  onStarted?: (runId: string) => void,
 ): Promise<SimulationFrame[]> {
   const { engine } = useAppStore.getState();
   if (!engine) return Promise.reject(new Error("Simulation worker is not running."));
@@ -173,6 +249,7 @@ function runToFrames(
           reject(new RunCancelled());
           return;
         }
+        onStarted?.(runId);
         useAppStore.getState().setRunId(runId);
         unsubscribe?.();
         unsubscribe = engine.subscribe(runId, (event) => onRunEvent(runId, event, onProgress, resolve, reject));
@@ -181,6 +258,18 @@ function runToFrames(
       .catch((error: unknown) => {
         reject(error instanceof Error ? error : new Error("Simulation failed."));
       });
+  });
+}
+
+function resumeToFrames(
+  runId: string,
+  onProgress: (fraction: number, message: string) => void,
+): Promise<SimulationFrame[]> {
+  const { engine } = useAppStore.getState();
+  if (!engine) return Promise.reject(new Error("Simulation worker is not running."));
+  return new Promise((resolve, reject) => {
+    unsubscribe?.();
+    unsubscribe = engine.subscribe(runId, (event) => onRunEvent(runId, event, onProgress, resolve, reject));
   });
 }
 
