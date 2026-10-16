@@ -7,8 +7,11 @@ import Map, {
   type MapRef,
 } from "react-map-gl/maplibre";
 import type { FeatureCollection, Geometry } from "geojson";
-import type { Map as MaplibreMap, StyleSpecification } from "maplibre-gl";
+import { setWorkerUrl, type Map as MaplibreMap, type StyleSpecification } from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
+
+setWorkerUrl(maplibreWorkerUrl);
 import { Button } from "@/components/ui/button";
 import { loadBasemap, roadInsertBeforeId } from "@/map/basemap";
 import {

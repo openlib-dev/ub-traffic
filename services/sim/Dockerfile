@@ -22,6 +22,9 @@ RUN python3 -m venv /opt/venv \
 ENV PATH=/opt/venv/bin:$PATH
 
 COPY sumo_worker ./sumo_worker
+COPY city /opt/city
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8081
-CMD ["python3", "-m", "sumo_worker"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

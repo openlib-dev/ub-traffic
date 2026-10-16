@@ -13,8 +13,9 @@
 #   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# The site is http://<host>:8090/. Saved results and the SUMO network stay in ./data/sim.
+# The site is http://<host>:8090/. Saved results stay in ./data/sim.
 # The city road file is read from ./apps/web/public/data at runtime.
+# An empty ./data/sim receives ulaanbaatar.osm, the SUMO network, and attractors.json from the image.
 
 services:
   sim:

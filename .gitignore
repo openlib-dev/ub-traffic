@@ -1,6 +1,7 @@
 node_modules
 data/cache
 data/sim
+services/sim/city
 dist
 dist-ssr
 *.local
